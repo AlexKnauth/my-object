@@ -4,5 +4,5 @@
 
 (define deps '("base" "hash-lambda" "kw-utils" "unstable-list-lib"))
 
-(define build-deps '("rackunit-lib"))
+(define build-deps '("rackunit-lib" "scribble-lib"))
 

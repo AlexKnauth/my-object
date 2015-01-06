@@ -43,7 +43,11 @@
   (struct λobject (hsh)
     #:property prop:procedure λobj)
   (struct object (name λobj fields-promise)
-    #:property prop:procedure obj))
+    #:property prop:procedure obj
+    #:methods gen:custom-write
+    [(define (write-proc obj out mode)
+       (obj-write-proc obj out mode))]
+    ))
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;; macros
@@ -71,10 +75,11 @@
 
 (define-simple-macro
   (λobject-extend %-expr:expr
-                  (~optional (~seq #:inherit (inherit-id ...)) #:defaults ([(inherit-id 1) '()]))
-                  (~optional (~seq #:super ([super-id1 super-id2] ...))
-                             #:defaults ([(super-id1 1) '()]
-                                         [(super-id2 1) '()]))
+                  (~or (~optional (~seq #:inherit (inherit-id ...)) #:defaults ([(inherit-id 1) '()]))
+                       (~optional (~seq #:super ([super-id1 super-id2] ...))
+                                  #:defaults ([(super-id1 1) '()]
+                                              [(super-id2 1) '()])))
+                  ...
                   [field:id expr:expr] ...)
   (local [(define % %-expr)
           (define (field ths)
@@ -89,11 +94,11 @@
 
 (define-simple-macro
   (object-extend obj
-                 (~optional (~seq #:inherit (inherit-id ...))
-                            #:defaults ([(inherit-id 1) '()]))
-                 (~optional (~seq #:super ([super-id1 super-id2] ...))
-                            #:defaults ([(super-id1 1) '()]
-                                        [(super-id2 1) '()]))
+                 (~or (~optional (~seq #:inherit (inherit-id ...))
+                                 #:defaults ([(inherit-id 1) '()]))
+                      (~optional (~seq #:super ([super-id1 super-id2] ...))
+                                 #:defaults ([(super-id1 1) '()]
+                                             [(super-id2 1) '()]))) ...
                  [field:id expr:expr] ...)
   ((λobject-extend (object-λobj obj)
                    #:inherit (inherit-id ...)
@@ -161,6 +166,21 @@
 (define (extend-λobject % hsh)
   (match-define (-λobject %.hsh) %)
   (-λobject (hash-union %.hsh hsh #:combine (λ (v1 v2) v2))))
+
+(define (obj-write-proc obj out mode)
+  (match-define (-object name λobj fields-promise) obj)
+  (match mode
+    [0  (write-string "(object" out)
+        (for ([(k v) (in-hash (force fields-promise))])
+          (fprintf out " [~a ~v]" k v))
+        (write-string ")" out)
+        (void)]
+    [_ #:when (symbol? name) (fprintf out "#<object:~a>" name)]
+    [_ (write-string "#<object" out)
+       (for ([(k v) (in-hash (force fields-promise))])
+         (fprintf out " [~a ~v]" k v))
+       (write-string ">" out)
+       (void)]))
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 
