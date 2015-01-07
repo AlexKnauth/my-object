@@ -30,20 +30,15 @@
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;; structs
 
-(defs-renamed ([-λobject λobject]
-               [-object object]
+(defs-renamed ([-object object]
                object?
-               object-λobj
+               object-λfields
                object-fields-promise)
-  (defs-renamed ([obj object] [λobj λobject])
+  (defs-renamed ([obj object])
     (define object
       (keyword-lambda (kws kw-args ths . rst)
-        (keyword-apply object-proc kws kw-args ths rst)))
-    (define (λobject ths%)
-      (λobject-proc ths%)))
-  (struct λobject (hsh)
-    #:property prop:procedure λobj)
-  (struct object (name λobj fields-promise)
+        (keyword-apply object-proc kws kw-args ths rst))))
+  (struct object (name λfields fields-promise)
     #:property prop:procedure obj
     #:methods gen:custom-write
     [(define (write-proc obj out mode)
@@ -85,59 +80,42 @@
 
 (define-simple-macro
   (object [field:id expr:expr] ...)
-  ((λobject [field expr] ...)))
-
-(define-simple-macro
-  (λobject [field:id expr:expr] ...)
   (local [(define (field ths)
             (syntax-parameterize ([this (make-rename-transformer #'ths)])
               (deffld field ths) ...
               expr))
           ...]
-    (-λobject (make-immutable-hasheq (list (cons 'field field) ...)))))
+    (λfields->object (make-immutable-hasheq (list (cons 'field field) ...)))))
 
 (define-simple-macro
-  (λobject-extend %-expr:expr
-                  (~or (~optional (~seq #:inherit (inherit-id ...)) #:defaults ([(inherit-id 1) '()]))
-                       (~optional (~seq #:super ([super-id1 super-id2] ...))
-                                  #:defaults ([(super-id1 1) '()]
-                                              [(super-id2 1) '()])))
-                  ...
-                  [field:id expr:expr] ...)
-  (local [(define % %-expr)
+  (object-extend super-obj-expr:expr
+                 (~or (~optional (~seq #:inherit (inherit-id ...)) #:defaults ([(inherit-id 1) '()]))
+                      (~optional (~seq #:super ([super-id1 super-id2] ...))
+                                 #:defaults ([(super-id1 1) '()]
+                                             [(super-id2 1) '()])))
+                 ...
+                 [field:id expr:expr] ...)
+  (local [(define super super-obj-expr)
+          (define super.λfields (object-λfields super))
           (define (field ths)
             (syntax-parameterize ([this (make-rename-transformer #'ths)])
-              (define super (λobject-proc %))
               (deffld inherit-id ths) ...
               (deffld [super-id1 super-id2] super) ...
               (deffld field ths) ...
               expr))
           ...]
-    (extend-λobject % (make-immutable-hasheq (list (cons 'field field) ...)))))
-
-(define-simple-macro
-  (object-extend obj
-                 (~or (~optional (~seq #:inherit (inherit-id ...))
-                                 #:defaults ([(inherit-id 1) '()]))
-                      (~optional (~seq #:super ([super-id1 super-id2] ...))
-                                 #:defaults ([(super-id1 1) '()]
-                                             [(super-id2 1) '()]))) ...
-                 [field:id expr:expr] ...)
-  ((λobject-extend (object-λobj obj)
-                   #:inherit (inherit-id ...)
-                   #:super ([super-id1 super-id2] ...)
-                   [field expr] ...)))
+    (λfields->object
+     (extend-λfields super.λfields (make-immutable-hasheq (list (cons 'field field) ...))))))
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;; functions
 
-(define (λobject-proc ths%)
-  (match-define (-λobject %.hsh) ths%)
+(define (λfields->object λfields)
   (define flds-promise
-    (delay (for/hash ([(k v) (in-hash %.hsh)])
+    (delay (for/hash ([(k v) (in-hash λfields)])
              (values k (v ths)))))
   (define ths
-    (-object #f ths% flds-promise))
+    (-object #f λfields flds-promise))
   (force flds-promise)
   ths)
 
@@ -174,9 +152,9 @@
          (object-ref1 obj fld #:else fail))]))
 
 (define (object-set-m1 obj fld #:->m m)
-  (define ths% (object-λobj obj))
-  (define new-ths% (extend-λobject ths% (hasheq fld m)))
-  (new-ths%))
+  (define λfields (object-λfields obj))
+  (define new-λfields (extend-λfields λfields (hasheq fld m)))
+  (λfields->object new-λfields))
 
 (define (object-set1 obj fld #:-> v)
   (object-set-m1 obj fld #:->m (λ (ths) v)))
@@ -195,9 +173,8 @@
 (define (send obj method . args)
   (apply (object-ref1 obj method #:else (λ () (send-failure obj method))) args))
 
-(define (extend-λobject % hsh)
-  (match-define (-λobject %.hsh) %)
-  (-λobject (hash-union %.hsh hsh #:combine (λ (v1 v2) v2))))
+(define (extend-λfields λfields hsh)
+  (hash-union λfields hsh #:combine (λ (v1 v2) v2)))
 
 (define (obj-write-proc obj out mode)
   (match-define (-object name λobj fields-promise) obj)
