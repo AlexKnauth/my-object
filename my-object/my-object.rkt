@@ -173,6 +173,17 @@
 (define (send obj method . args)
   (apply (object-ref1 obj method #:else (λ () (send-failure obj method))) args))
 
+(define-simple-macro (send* obj-expr:expr (method:id arg ...) ...+)
+  (let ([obj obj-expr])
+    (send obj 'method arg ...)
+    ...))
+
+(define-simple-macro (send+ obj-expr:expr msg:expr ...)
+  (let* ([obj obj-expr]
+         [obj (send* obj msg)] ...)
+    obj))
+  
+
 (define (extend-λfields λfields hsh)
   (hash-union λfields hsh #:combine (λ (v1 v2) v2)))
 
@@ -261,9 +272,10 @@
       (object-extend (make-fish sz)
                      #:inherit (eat)
                      [eat-more (λ (fish1 fish2)
-                                 (eat fish1)
-                                 (eat fish2))]))
-    (check-equal? (send (make-hungry-fish 32) 'get-size) 32)
+                                 (send+ this (eat fish1) (eat fish2)))]))
+    (define hungry-fish (make-hungry-fish 32))
+    (check-equal? (hungry-fish 'size) 32)
+    (check-equal? ((send hungry-fish 'eat-more charlie charlie2) 'size) 58)
     (define (make-picky-fish sz)
       (object-extend (make-fish sz)
                      #:super ([super-grow grow])
