@@ -100,7 +100,9 @@
           (define (field ths)
             (syntax-parameterize ([this (make-rename-transformer #'ths)])
               (deffld inherit-id ths) ...
-              (deffld [super-id1 super-id2] super) ...
+              (define super-id1
+                ((hash-ref super.λfields 'super-id2) ths))
+              ...
               (deffld field ths) ...
               expr))
           ...]
@@ -313,4 +315,15 @@
     (send daisy 'eat charlie)
     (check-equal? (send daisy 'get-size) 32)
     )
+  (test-case "test super corner-case"
+    (define sup
+      (object [m1 (λ (x) (error 'nevergetshere))]
+              [m2 (λ (y) (m1 y))]))
+    (define sub
+      (object-extend sup
+                     #:super ([super-m2 m2])
+                     [m1 (λ (x) (add1 x))]
+                     [m2 (λ (y) (error 'nevergetshere))]
+                     [m3 (λ (y) (super-m2 y))]))
+    (check-equal? (send sub 'm3 1) 2))
   )
