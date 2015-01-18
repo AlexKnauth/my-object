@@ -33,12 +33,13 @@
 (defs-renamed ([-object object]
                object?
                object-λfields
-               object-fields-promise)
+               object-fields-promise
+               object-final-fields)
   (defs-renamed ([obj object])
     (define object
       (keyword-lambda (kws kw-args ths . rst)
         (keyword-apply object-proc kws kw-args ths rst))))
-  (struct object (name λfields fields-promise)
+  (struct object (name λfields fields-promise final-fields)
     #:property prop:procedure obj
     #:methods gen:custom-write
     [(define (write-proc obj out mode)
@@ -84,24 +85,33 @@
                                    #:defaults ([(inherit-id 1) '()]))
                         (~optional (~seq #:super ([super-id1:id super-id2:id] ...))
                                    #:defaults ([(super-id1 1) '()] [(super-id2 1) '()])))
-                   ...)]))
+                   ...)])
+  (define-splicing-syntax-class field-decls
+    [pattern (~and (~seq field-decl ...)
+                   (~seq (~or [normal-field:id normal-field-expr:expr]
+                              [final-field:id final-field-expr:expr #:final])
+                         ...))
+             #:with ([field field-expr] ...) #'([normal-field normal-field-expr] ...
+                                                [final-field final-field-expr] ...)]))
 
 (define-syntax-parser object
-  [(object [field:id expr:expr] ...)
+  [(object :field-decls)
    #'(local [(define (field ths)
                (syntax-parameterize ([this (make-rename-transformer #'ths)])
                  (deffld field ths) ...
-                 expr))
+                 field-expr))
              ...]
-       (λfields->object (make-immutable-hasheq (list (cons 'field field) ...))))]
-  [(object #:extends super-obj-expr:expr :maybe-inherit/super [field:id expr:id] ...)
+       (λfields->object (make-immutable-hasheq (list (cons 'field field) ...))
+                        #:final '(final-field ...)))]
+  [(object #:extends super-obj-expr:expr :maybe-inherit/super :field-decls)
    #'(object-extend super-obj-expr #:inherit (inherit-id ...) #:super ([super-id1 super-id2] ...)
-                    [field expr] ...)])
+                    field-decl ...)])
 
 (define-simple-macro
-  (object-extend super-obj-expr:expr :maybe-inherit/super [field:id expr:expr] ...)
+  (object-extend super-obj-expr:expr :maybe-inherit/super :field-decls)
   (local [(define super super-obj-expr)
           (define super.λfields (object-λfields super))
+          (define super.final-fields (object-final-fields super))
           (define (field ths)
             (syntax-parameterize ([this (make-rename-transformer #'ths)])
               (deffld inherit-id ths) ...
@@ -109,20 +119,24 @@
                 ((hash-ref super.λfields 'super-id2) ths))
               ...
               (deffld field ths) ...
-              expr))
+              field-expr))
           ...]
+    (when (member 'field super.final-fields)
+      (raise-final-field-error #'field super))
+    ...
     (λfields->object
-     (extend-λfields super.λfields (make-immutable-hasheq (list (cons 'field field) ...))))))
+     (extend-λfields super.λfields (make-immutable-hasheq (list (cons 'field field) ...)))
+     #:final (append super.final-fields '(final-field ...)))))
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;; functions
 
-(define (λfields->object λfields)
+(define (λfields->object λfields #:final [final-fields '()])
   (define flds-promise
     (delay (for/hash ([(k v) (in-hash λfields)])
              (values k (v ths)))))
   (define ths
-    (-object #f λfields flds-promise))
+    (-object #f λfields flds-promise final-fields))
   (force flds-promise)
   ths)
 
@@ -160,6 +174,8 @@
 
 (define (object-set-m1 obj fld #:->m m)
   (define λfields (object-λfields obj))
+  (when (member fld (object-final-fields obj))
+    (raise-final-field-error fld obj))
   (define new-λfields (extend-λfields λfields (hasheq fld m)))
   (λfields->object new-λfields))
 
@@ -195,11 +211,14 @@
   (hash-union λfields hsh #:combine (λ (v1 v2) v2)))
 
 (define (obj-write-proc obj out mode)
-  (match-define (-object name λobj fields-promise) obj)
+  (match-define (-object name λobj fields-promise final-fields) obj)
   (match mode
     [0  (write-string "(object" out)
         (for ([(k v) (in-hash (force fields-promise))])
-          (fprintf out " [~a ~v]" k v))
+          (cond [(member k final-fields)
+                 (fprintf out " [~a ~v #:final]" k v)]
+                [else
+                 (fprintf out " [~a ~v]" k v)]))
         (write-string ")" out)
         (void)]
     [_ #:when (symbol? name) (fprintf out "#<object:~a>" name)]
@@ -232,6 +251,13 @@
           "  method: ~a" "\n"
           "  object: ~v")
          method obj))
+
+(define (raise-final-field-error field super)
+  (define field-stx (if (syntax? field) field (datum->syntax #f field)))
+  (define field-sym (syntax-e field-stx))
+  (raise-syntax-error 'object-extend
+                      (format "cannot override the field ~a of ~v" field-sym super)
+                      field-stx))
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 
@@ -331,4 +357,15 @@
                      [m2 (λ (y) (error 'nevergetshere))]
                      [m3 (λ (y) (super-m2 y))]))
     (check-equal? (send sub 'm3 1) 2))
+  (test-case "final"
+    (define sup
+      (object [m1 (λ (x) x) #:final] [m2 (λ (x) x)]))
+    (check-exn #rx"object-extend: cannot override the field m1"
+               (λ () (object-extend sup [m1 (λ (x) (add1 x))])))
+    (define sub
+      (object-extend sup [m2 (λ (x) (add1 x)) #:final]))
+    (check-exn #rx"object-extend: cannot override the field m2"
+               (λ () (object-extend sub [m2 (λ (x) (add1 x))])))
+    (check-exn #rx"object-extend: cannot override the field m1"
+               (λ () (object-extend sub [m1 (λ (x) (add1 x))]))))
   )
