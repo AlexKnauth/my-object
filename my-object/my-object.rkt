@@ -63,7 +63,7 @@
      (define (dict->list obj)             (hash->list (object-fields obj)))
      (define (in-dict obj)                (in-hash (object-fields obj)))
      (define (in-dict-keys obj)           (in-hash-keys (object-fields obj)))
-     (define (in-hash-values obj)         (in-hash-values (object-fields obj)))
+     (define (in-dict-values obj)         (in-hash-values (object-fields obj)))
      (define (in-dict-pairs obj)          (in-hash-pairs (object-fields obj)))]
     ))
 
@@ -78,23 +78,28 @@
   [(deffld id:id ths:id)
    #'(deffld [id id] ths)])
 
-(define-simple-macro
-  (object [field:id expr:expr] ...)
-  (local [(define (field ths)
-            (syntax-parameterize ([this (make-rename-transformer #'ths)])
-              (deffld field ths) ...
-              expr))
-          ...]
-    (λfields->object (make-immutable-hasheq (list (cons 'field field) ...)))))
+(begin-for-syntax
+  (define-splicing-syntax-class maybe-inherit/super
+    [pattern (~seq (~or (~optional (~seq #:inherit (inherit-id:id ...))
+                                   #:defaults ([(inherit-id 1) '()]))
+                        (~optional (~seq #:super ([super-id1:id super-id2:id] ...))
+                                   #:defaults ([(super-id1 1) '()] [(super-id2 1) '()])))
+                   ...)]))
+
+(define-syntax-parser object
+  [(object [field:id expr:expr] ...)
+   #'(local [(define (field ths)
+               (syntax-parameterize ([this (make-rename-transformer #'ths)])
+                 (deffld field ths) ...
+                 expr))
+             ...]
+       (λfields->object (make-immutable-hasheq (list (cons 'field field) ...))))]
+  [(object #:extends super-obj-expr:expr :maybe-inherit/super [field:id expr:id] ...)
+   #'(object-extend super-obj-expr #:inherit (inherit-id ...) #:super ([super-id1 super-id2] ...)
+                    [field expr] ...)])
 
 (define-simple-macro
-  (object-extend super-obj-expr:expr
-                 (~or (~optional (~seq #:inherit (inherit-id ...)) #:defaults ([(inherit-id 1) '()]))
-                      (~optional (~seq #:super ([super-id1 super-id2] ...))
-                                 #:defaults ([(super-id1 1) '()]
-                                             [(super-id2 1) '()])))
-                 ...
-                 [field:id expr:expr] ...)
+  (object-extend super-obj-expr:expr :maybe-inherit/super [field:id expr:expr] ...)
   (local [(define super super-obj-expr)
           (define super.λfields (object-λfields super))
           (define (field ths)
