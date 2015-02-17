@@ -68,6 +68,11 @@
      (define (in-dict-pairs obj)          (in-hash-pairs (object-fields obj)))]
     ))
 
+(define empty-fields-promise (delay #hasheq()))
+(void (force empty-fields-promise))
+
+(define empty-object (-object 'empty-object #hasheq() empty-fields-promise '()))
+
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;; macros
 
@@ -96,13 +101,7 @@
 
 (define-syntax-parser object
   [(object :field-decls)
-   #'(local [(define (field ths)
-               (syntax-parameterize ([this (make-rename-transformer #'ths)])
-                 (deffld field ths) ...
-                 field-expr))
-             ...]
-       (λfields->object (make-immutable-hasheq (list (cons 'field field) ...))
-                        #:final '(final-field ...)))]
+   #'(object-extend empty-object field-decl ...)]
   [(object #:extends super-obj-expr:expr :maybe-inherit/super :field-decls)
    #'(object-extend super-obj-expr #:inherit (inherit-id ...) #:super ([super-id1 super-id2] ...)
                     field-decl ...)])
@@ -124,12 +123,24 @@
     (when (member 'field super.final-fields)
       (raise-final-field-error #'field super))
     ...
-    (λfields->object
-     (extend-λfields super.λfields (make-immutable-hasheq (list (cons 'field field) ...)))
-     #:final (append super.final-fields '(final-field ...)))))
+    (extend-object
+     super
+     #:λfields (make-immutable-hasheq (list (cons 'field field) ...))
+     #:final '(final-field ...))))
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;; functions
+
+(define (extend-object super #:λfields new-λfields #:final new-final-fields)
+  (match-define
+    (-object _ super.λfields _ super.final-fields)
+    super)
+  (for ([(k v) (in-hash new-λfields)])
+    (when (member k super.final-fields)
+      (raise-final-field-error k super)))
+  (λfields->object
+   (extend-λfields super.λfields new-λfields)
+   #:final (append super.final-fields new-final-fields)))
 
 (define (λfields->object λfields #:final [final-fields '()])
   (define flds-promise
@@ -173,11 +184,7 @@
          (object-ref1 obj fld #:else fail))]))
 
 (define (object-set-m1 obj fld #:->m m)
-  (define λfields (object-λfields obj))
-  (when (member fld (object-final-fields obj))
-    (raise-final-field-error fld obj))
-  (define new-λfields (extend-λfields λfields (hasheq fld m)))
-  (λfields->object new-λfields))
+  (extend-object obj #:λfields (hasheq fld m) #:final '()))
 
 (define (object-set1 obj fld #:-> v)
   (object-set-m1 obj fld #:->m (λ (ths) v)))
