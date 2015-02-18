@@ -95,7 +95,7 @@
 
 (define-syntax-parser deffld
   [(deffld [id1:id id2:id] ths:id)
-   #'(def-var-like-trans id1 #'(object-ref1 ths 'id2))]
+   #'(def-var-like-trans id1 #'(object-ref1 ths #'id2))]
   [(deffld id:id ths:id)
    #'(deffld [id id] ths)])
 
@@ -142,26 +142,23 @@
               (deffld field ths) ...
               field-expr))
           ...]
-    (when (member 'field super.final-fields)
-      (raise-final-field-error #'field super))
-    ...
     (extend-object
      super
-     #:λfields (make-immutable-hasheq (list (cons 'field field) ...))
+     (make-immutable-hasheq (list (cons #'field field) ...))
      #:final '(final-field ...))))
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;; functions
 
-(define (extend-object super #:λfields new-λfields #:final new-final-fields)
+(define (extend-object super new-procs #:final new-final-fields)
   (match-define
     (-object _ super.λfields _ super.final-fields)
     super)
-  (for ([(k v) (in-hash new-λfields)])
-    (when (member k super.final-fields)
+  (for ([(k v) (in-hash new-procs)])
+    (when (member (stx-e k) super.final-fields)
       (raise-final-field-error k super)))
   (λfields->object
-   (extend-λfields super.λfields new-λfields)
+   (extend-λfields super.λfields new-procs)
    #:final (append super.final-fields new-final-fields)))
 
 (define (λfields->object λfields #:final [final-fields '()])
@@ -173,14 +170,15 @@
   (force flds-promise)
   ths)
 
-(define (augment/override-λfield λfld proc)
+(define (augment/override-λfield λfld proc #:stx [stx #f])
   (define-values (req-kws all-kws) (procedure-keywords proc))
-  (match-define (λfield stx λaugmentable λoverrideable) λfld)
+  (match-define (λfield old-stx λaugmentable λoverrideable) λfld)
   (match* (req-kws all-kws)
     [('() '())
-     (λfield stx λaugmentable proc)]
+     (λfield (if (syntax? stx) stx old-stx)
+             λaugmentable proc)]
     [('(#:augment-with) '(#:augment-with))
-     (λfield stx
+     (λfield (if (syntax? stx) stx old-stx)
              (λ (ths #:augment-with inner-inner)
                (define inner (proc ths #:augment-with inner-inner))
                (λaugmentable ths #:augment-with inner))
@@ -208,10 +206,10 @@
   (force (object-fields-promise obj)))
 
 (define (object-has-field? obj fld)
-  (hash-has-key? (object-fields obj) fld))
+  (hash-has-key? (object-fields obj) (stx-e fld)))
 
 (define (object-ref1 obj fld #:else [failure (λ () (object-ref-failure obj fld))])
-  (hash-ref (object-fields obj) fld failure))
+  (hash-ref (object-fields obj) (stx-e fld) failure))
 
 (define fail-sym (gensym 'failure))
 (define (object-ref obj #:else [failure fail-sym] . flds)
@@ -226,7 +224,7 @@
          (object-ref1 obj fld #:else fail))]))
 
 (define (object-set-m1 obj fld #:->m m)
-  (extend-object obj #:λfields (hasheq fld m) #:final '()))
+  (extend-object obj (hasheq fld m) #:final '()))
 
 (define (object-set1 obj fld #:-> v)
   (object-set-m1 obj fld #:->m (λ (ths) v)))
@@ -247,7 +245,7 @@
 
 (define-simple-macro (send* obj-expr:expr (method:id arg ...) ...+)
   (let ([obj obj-expr])
-    (send obj 'method arg ...)
+    (send obj #'method arg ...)
     ...))
 
 (define-simple-macro (send+ obj-expr:expr msg:expr ...)
@@ -259,10 +257,10 @@
 (define (extend-λfields λfields hsh)
   (for/fold ([λfields λfields])
             ([(k v) (in-hash hsh)])
-    (hash-update λfields k
+    (hash-update λfields (stx-e k)
       (lambda (old-v)
         (augment/override-λfield
-         old-v v))
+         old-v v #:stx (if (syntax? k) k #f)))
       (lambda () default-λfield))))
 
 (define (obj-write-proc obj out mode)
@@ -284,31 +282,41 @@
        (void)]))
 
 (define (object-ref-failure obj fld)
-  (error 'object-ref
-         (string-append
-          "object does not have field" "\n"
-          "  field: ~a" "\n"
-          "  object: ~v")
-         fld obj))
+  (define fld-stx (stx fld))
+  (define fld-sym (syntax-e fld-stx))
+  (raise-syntax-error 'object-ref
+                      (format
+                       (string-append
+                        "object does not have field" "\n"
+                        "  field: ~a" "\n"
+                        "  object: ~v")
+                       fld-sym obj)
+                      fld-stx))
 
 (define (object-ref*-failure obj flds)
+  (define flds-stx (stx flds))
+  (define fld-syms (syntax->datum flds-stx))
   (error 'object-ref*
          (string-append
           "object does not have nested field chain" "\n"
           "  field chain: ~a" "\n"
           "  object: ~v")
-         flds obj))
+         fld-syms obj))
 
 (define (send-failure obj method)
-  (error 'send
-         (string-append
-          "object does not have method" "\n"
-          "  method: ~a" "\n"
-          "  object: ~v")
-         method obj))
+  (define method-stx (stx method))
+  (define method-sym (syntax-e method-stx))
+  (raise-syntax-error 'send
+                      (format
+                       (string-append
+                        "object does not have method" "\n"
+                        "  method: ~a" "\n"
+                        "  object: ~v")
+                       method obj)
+                      method-stx))
 
 (define (raise-final-field-error field super)
-  (define field-stx (if (syntax? field) field (datum->syntax #f field)))
+  (define field-stx (stx field))
   (define field-sym (syntax-e field-stx))
   (raise-syntax-error 'object-extend
                       (format "cannot override the field ~a of ~v" field-sym super)
@@ -321,7 +329,7 @@
     (define obj
       (object [a 1] [b 2] [c 3]))
     (check-pred object? obj)
-    (check-equal? (obj 'a) 1)
+    (check-equal? (obj #'a) 1)
     (check-equal? (obj 'b) 2)
     (check-equal? (obj 'c) 3)
     (define obj2 (obj 'a #:-> 5))
@@ -332,12 +340,12 @@
       (object [ball
                (object [position (object [x 1] [y 2])]
                        [velocity (object [x 3] [y 4])])]))
-    (check-equal? (obj 'ball 'position 'x) 1)
+    (check-equal? (obj #'ball #'position #'x) 1)
     (check-equal? (obj 'ball 'position 'y) 2)
     (check-equal? (obj 'ball 'velocity 'x) 3)
     (check-equal? (obj 'ball 'velocity 'y) 4)
-    (define obj2 (obj 'ball 'velocity 'x #:-> 5))
-    (check-equal? (obj2 'ball 'position 'x) 1)
+    (define obj2 (obj #'ball 'velocity 'x #:-> 5))
+    (check-equal? (obj2 #'ball #'position #'x) 1)
     (check-equal? (obj2 'ball 'position 'y) 2)
     (check-equal? (obj2 'ball 'velocity 'x) 5)
     (check-equal? (obj2 'ball 'velocity 'y) 4)

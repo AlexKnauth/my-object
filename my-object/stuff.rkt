@@ -32,3 +32,10 @@
       (defrename [tmp-id inner-id] ...))
     (defrename [outer-id tmp-id] ...)))
 
+(define (stx-e stx)
+  (if (syntax? stx) (syntax-e stx) stx))
+
+(define (stx stx)
+  (if (syntax? stx) stx (datum->syntax #f stx)))
+
+
