@@ -34,11 +34,14 @@
                object?
                object-λfields
                object-fields-promise
-               object-final-fields)
-  (defs-renamed ([obj object])
+               object-final-fields
+               λfield)
+  (defs-renamed ([obj object] [λfld λfield])
     (define object
       (keyword-lambda (kws kw-args ths . rst)
-        (keyword-apply object-proc kws kw-args ths rst))))
+        (keyword-apply object-proc kws kw-args ths rst)))
+    (define (λfield λfld ths)
+      (λfield-proc λfld ths)))
   (struct object (name λfields fields-promise final-fields)
     #:property prop:procedure obj
     #:methods gen:custom-write
@@ -66,12 +69,24 @@
      (define (in-dict-keys obj)           (in-hash-keys (object-fields obj)))
      (define (in-dict-values obj)         (in-hash-values (object-fields obj)))
      (define (in-dict-pairs obj)          (in-hash-pairs (object-fields obj)))]
-    ))
+    )
+  (struct λfield (stx λaugmentable λoverrideable) #:transparent
+    #:property prop:procedure λfld)
+  )
 
 (define empty-fields-promise (delay #hasheq()))
 (void (force empty-fields-promise))
 
 (define empty-object (-object 'empty-object #hasheq() empty-fields-promise '()))
+
+(define (default-λaugmentable ths #:augment-with inner)
+  inner)
+
+(define (default-λoverrideable ths)
+  void)
+
+(define default-λfield
+  (λfield #f default-λaugmentable default-λoverrideable))
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;; macros
@@ -94,10 +109,16 @@
   (define-splicing-syntax-class field-decls
     [pattern (~and (~seq field-decl ...)
                    (~seq (~or [normal-field:id normal-field-expr:expr]
-                              [final-field:id final-field-expr:expr #:final])
+                              [final-field:id final-field-expr:expr #:final]
+                              [augmentable-field:id augmentable-field-expr:expr
+                                                    #:augmentable #:with inner-id:id])
                          ...))
-             #:with ([field field-expr] ...) #'([normal-field normal-field-expr] ...
-                                                [final-field final-field-expr] ...)]))
+             #:with ([field field-expr field-args] ...)
+             #'([normal-field normal-field-expr (ths)] ...
+                [final-field final-field-expr (ths)] ...
+                [augmentable-field augmentable-field-expr
+                                   (ths #:augment-with inner-id)] ...
+                )]))
 
 (define-syntax-parser object
   [(object :field-decls)
@@ -109,9 +130,10 @@
 (define-simple-macro
   (object-extend super-obj-expr:expr :maybe-inherit/super :field-decls)
   (local [(define super super-obj-expr)
-          (define super.λfields (object-λfields super))
-          (define super.final-fields (object-final-fields super))
-          (define (field ths)
+          (match-define
+            (-object _ super.λfields _ super.final-fields)
+            super)
+          (define (field . field-args)
             (syntax-parameterize ([this (make-rename-transformer #'ths)])
               (deffld inherit-id ths) ...
               (define super-id1
@@ -150,6 +172,26 @@
     (-object #f λfields flds-promise final-fields))
   (force flds-promise)
   ths)
+
+(define (augment/override-λfield λfld proc)
+  (define-values (req-kws all-kws) (procedure-keywords proc))
+  (match-define (λfield stx λaugmentable λoverrideable) λfld)
+  (match* (req-kws all-kws)
+    [('() '())
+     (λfield stx λaugmentable proc)]
+    [('(#:augment-with) '(#:augment-with))
+     (λfield stx
+             (λ (ths #:augment-with inner-inner)
+               (define inner (proc ths #:augment-with inner-inner))
+               (λaugmentable ths #:augment-with inner))
+             default-λoverrideable)]
+    ))
+  
+(define (λfield-proc λfld ths)
+  (match-define (λfield stx λaugmentable λoverrideable) λfld)
+  (λaugmentable ths #:augment-with (λoverrideable ths)))
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 
 (define object-proc
   (keyword-case-lambda
@@ -215,10 +257,16 @@
   
 
 (define (extend-λfields λfields hsh)
-  (hash-union λfields hsh #:combine (λ (v1 v2) v2)))
+  (for/fold ([λfields λfields])
+            ([(k v) (in-hash hsh)])
+    (hash-update λfields k
+      (lambda (old-v)
+        (augment/override-λfield
+         old-v v))
+      (lambda () default-λfield))))
 
 (define (obj-write-proc obj out mode)
-  (match-define (-object name λobj fields-promise final-fields) obj)
+  (match-define (-object name λfields fields-promise final-fields) obj)
   (match mode
     [0  (write-string "(object" out)
         (for ([(k v) (in-hash (force fields-promise))])
@@ -375,4 +423,62 @@
                (λ () (object-extend sub [m2 (λ (x) (add1 x))])))
     (check-exn #rx"object-extend: cannot override the field m1"
                (λ () (object-extend sub [m1 (λ (x) (add1 x))]))))
+  (test-case "inner"
+    (define sup
+      (object [m1 (λ (x) (define r (inner x))
+                    (if (integer? r) r (error 'm1 "needs to return an integer, given ~v" r)))
+                  #:augmentable #:with inner]))
+    (check-exn #rx"m1: needs to return an integer, given 'not-a-real-number"
+               (λ () (send (object-extend sup [m1 (λ (x) 'not-a-real-number)]) 'm1 0)))
+    (check-exn #rx"m1: needs to return an integer, given 1.5"
+               (λ () (send (object-extend sup [m1 (λ (x) 1.5)]) 'm1 0)))
+    (define sub2
+      (object-extend sup [m1 (λ (x) 5)]))
+    (check-equal? (send sub2 'm1 0) 5)
+    (define sub3
+      (object-extend sub2 [m1 (λ (x) "also not a real number")]))
+    (check-exn #rx"m1: needs to return an integer, given \"also not a real number\""
+               (λ () (send sub3 'm1 0)))
+    (define sub4
+      (object #:extends sup
+              [m1 (λ (x) (define r (inner x))
+                    (if (and (real? r) (positive? r))
+                        r
+                        (error 'm1 "needs to return a positive number, given ~v" r)))
+                  #:augmentable #:with inner]))
+    (define sub5
+      (object-extend sub4 [m1 (λ (x) x)]))
+    (check-equal? (send sub5 'm1 3) 3)
+    (check-exn #rx"m1: needs to return a positive number, given -1"
+               (λ () (send sub5 'm1 -1)))
+    (check-exn #rx"m1: needs to return an integer, given 1.5"
+               (λ () (send sub5 'm1 1.5)))
+    )
+  (test-case "inner with fields"
+    (define sup
+      (object [a (cond [(integer? inner) inner]
+                       [(eq? inner void) 0]
+                       [else (error 'a "expected an integer, given ~v" inner)])
+                 #:augmentable #:with inner]))
+    (check-exn #rx"a: expected an integer, given 'not-a-real-number"
+               (λ () (object-extend sup [a 'not-a-real-number])))
+    (check-exn #rx"a: expected an integer, given 1.5"
+               (λ () (object-extend sup [a 1.5])))
+    (define sub2
+      (object-extend sup [a 5]))
+    (check-equal? (sub2 'a) 5)
+    (check-exn #rx"a: expected an integer, given \"also not a real number\""
+               (λ () (object-extend sub2 [a "also not a real number"])))
+    (define sub4
+      (object #:extends sup
+              [a (cond [(and (real? inner) (positive? inner)) inner]
+                       [(eq? inner void) 0]
+                       [else (error 'a "expected a positive number, given ~v" inner)])
+                 #:augmentable #:with inner]))
+    (check-equal? ((object-extend sub4 [a 3]) 'a) 3)
+    (check-exn #rx"a: expected a positive number, given -1"
+               (λ () (object-extend sub4 [a -1])))
+    (check-exn #rx"a: expected an integer, given 1.5"
+               (λ () (object-extend sub4 [a 1.5])))
+    )
   )
