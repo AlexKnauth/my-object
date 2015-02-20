@@ -7,7 +7,7 @@
 
 @defmodule[my-object]{
 my version of objects, inspired by
-@secref["Things" #:doc '(lib "heresy/doc/heresy.scrbl")] from
+@secref["Things" #:doc '(lib "heresy/docs/heresy.scrbl")] from
 @racketmodname[heresy]
 
 Also, the objects here do not mean @racketmodname[racket/class] objects.
