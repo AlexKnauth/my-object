@@ -19,9 +19,11 @@
          keyword-lambda/keyword-case-lambda
          kw-utils/keyword-lambda
          syntax/parse/define
+         syntax/stx
          unstable/hash
          racket/stxparam
          racket/dict
+         my-format
          "stuff.rkt"
          (for-syntax racket/base
                      syntax/parse
@@ -266,7 +268,7 @@
   (let* ([obj obj-expr]
          [obj (send* obj msg)] ...)
     obj))
-  
+
 
 (define (extend-λfields λfields hsh)
   (for/fold ([λfields λfields])
@@ -297,43 +299,41 @@
 
 (define (object-ref-failure obj fld)
   (define fld-stx (stx fld))
-  (define fld-sym (syntax-e fld-stx))
   (raise-syntax-error 'object-ref
-                      (format
-                       (string-append
-                        "object does not have field" "\n"
-                        "  field: ~a" "\n"
-                        "  object: ~v")
-                       fld-sym obj)
+                      (-format "object does not have field" "\n"
+                               "  field: ~a" (syntax-e fld-stx) "\n"
+                               "  object: ~v" obj)
                       fld-stx))
 
 (define (object-ref*-failure obj flds)
-  (define flds-stx (stx flds))
-  (define fld-syms (syntax->datum flds-stx))
-  (error 'object-ref*
-         (string-append
-          "object does not have nested field chain" "\n"
-          "  field chain: ~a" "\n"
-          "  object: ~v")
-         fld-syms obj))
+  (define fld-stxs (stx-map stx flds))
+  (define fld-stx
+    (let loop ([obj obj] [flds fld-stxs])
+      (match flds
+        [(list) (error 'object-ref*-failure "this should never happen")]
+        [(list-rest fst rst)
+         (cond [(object-has-field? obj fst) (loop (object-ref obj fst) rst)]
+               [else fst])])))
+  (raise-syntax-error 'object-ref*
+                      (-format
+                       "object does not have nested field chain" "\n"
+                       "  field chain: ~a" (map syntax-e fld-stxs) "\n"
+                       "  object: ~v" obj)
+                      fld-stx))
 
 (define (send-failure obj method)
   (define method-stx (stx method))
-  (define method-sym (syntax-e method-stx))
   (raise-syntax-error 'send
-                      (format
-                       (string-append
-                        "object does not have method" "\n"
-                        "  method: ~a" "\n"
-                        "  object: ~v")
-                       method obj)
+                      (-format
+                       "object does not have method" "\n"
+                       "  method: ~a" (syntax-e method-stx) "\n"
+                       "  object: ~v" obj)
                       method-stx))
 
 (define (raise-final-field-error field super)
   (define field-stx (stx field))
-  (define field-sym (syntax-e field-stx))
   (raise-syntax-error 'object-extend
-                      (format "cannot override the field ~a of ~v" field-sym super)
+                      (format "cannot override the field ~a of ~v" (syntax-e field-stx) super)
                       field-stx))
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
