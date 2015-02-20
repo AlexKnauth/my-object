@@ -111,8 +111,8 @@ This is based on the examples from
   (define p3 (send (posn 1 2) add (posn 3 4)))
   (send p3 ->list)
   (define p3 (posn 1 2))
-  (define p4 (object-extend p3 [x 3])) (code:comment "or (p3 'x #:-> 3)")
-  (send p3 ->list)
+  (code:line (define p4 (object-extend p3 [x 3])) (code:comment "or (p3 'x #:-> 3)"))
+  (send p4 ->list)
   (define (3d-posn x0 y0 z0)
     (object-extend (posn x0 y0)
                    #:inherit (x y)
@@ -129,7 +129,7 @@ This is based on the examples from @secref["classes" #:doc '(lib "scribblings/gu
 @examples[
   (require my-object)
   (define (make-fish sz)
-    (code:line (define size sz) (code:comment "private mutable field"))
+    (define size sz) (code:comment "private mutable field")
     (object [get-size (λ () size)]
             [grow (λ (amt)
                     (set! size (+ amt size)))]
