@@ -77,7 +77,7 @@ Equivalent to @racket[(let ([obj obj-expr]) (send obj . msg) ...)].
 @defform[(send+ obj-expr msg ...)
          #:grammar ([msg (method-id arg ...)
                          field-id])]{
-Equivalent to @racket[(let* ([obj obj-expr] [obj (send obj msg)] ...) obj)].
+Equivalent to @racket[(let* ([obj obj-expr] [obj (send* obj msg)] ...) obj)].
 }
 
 @defproc[(dynamic-send [obj object?] [method (or/c symbol? identifier?)] [arg any/c] ...) any]{
