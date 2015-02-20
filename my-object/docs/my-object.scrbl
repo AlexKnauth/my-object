@@ -1,7 +1,7 @@
 #lang scribble/manual
 
 @(require scribble/eval
-          (for-label my-object racket/base racket/contract))
+          (for-label my-object racket/base racket/contract racket/function))
 
 @title{my-object}
 
@@ -50,7 +50,37 @@ returns @racket[#t] if @racket[v] is an object, @racket[#f] otherwise.
 returns a hash-table containing the fields of @racket[obj].
 }
 
-@defproc[(send [obj object?] [method symbol?] [arg any/c] ...) any]{
+@defform*[#:literals (quote syntax identity)
+          [(send obj-expr method-id arg ...)
+           (send obj-expr (identity method-expr) arg ...)
+           (send obj-expr . field-id)
+           send]]{
+The first form is equivalent to @racket[((obj-expr #'method-id) arg ...)], or to
+@racket[(dynamic-send obj-expr #'method-id arg ...)].
+
+The second form allows the method to be determined at run time, and is
+equivalent to @racket[(dynamic-send obj-expr method-expr arg ...)].
+
+The third form is equivalent to @racket[(obj-expr #'field-id)], and is mainly
+provided so that @racket[send+] can use @racket[field-id] as a @racket[msg].
+
+When @racket[send] is used as an identifier by itself, it expands to
+@racket[dynamic-send].
+}
+
+@defform[(send* obj-expr msg ...)
+         #:grammar ([msg (method-id arg ...)
+                         field-id])]{
+Equivalent to @racket[(let ([obj obj-expr]) (send obj . msg) ...)].
+}
+
+@defform[(send+ obj-expr msg ...)
+         #:grammar ([msg (method-id arg ...)
+                         field-id])]{
+Equivalent to @racket[(let* ([obj obj-expr] [obj (send obj msg)] ...) obj)].
+}
+
+@defproc[(dynamic-send [obj object?] [method (or/c symbol? identifier?)] [arg any/c] ...) any]{
 equivalent to @racket[((obj method) arg ...)].  
 }
 
@@ -70,7 +100,7 @@ This is based on the examples from
   (define p (object [x 1] [y 2]))
   p
   (object? p)
-  (p 'x)
+  (p 'x) (code:comment "by the way, you can use #'x here instead of 'x")
   (p 'y)
   (define p2 (p 'x #:-> 3))
   p2
@@ -78,11 +108,11 @@ This is based on the examples from
     (object [x x0] [y y0]
             [add (λ (p) (posn (+ x (p 'x)) (+ y (p 'y))))]
             [->list (λ () (list x y))]))
-  (define p3 (send (posn 1 2) 'add (posn 3 4)))
-  (send p3 '->list)
+  (define p3 (send (posn 1 2) add (posn 3 4)))
+  (send p3 ->list)
   (define p3 (posn 1 2))
   (define p4 (object-extend p3 [x 3])) (code:comment "or (p3 'x #:-> 3)")
-  (send p3 '->list)
+  (send p3 ->list)
   (define (3d-posn x0 y0 z0)
     (object-extend (posn x0 y0)
                    #:inherit (x y)
@@ -104,26 +134,26 @@ This is based on the examples from @secref["classes" #:doc '(lib "scribblings/gu
             [grow (λ (amt)
                     (set! size (+ amt size)))]
             [eat (λ (other-fish)
-                   (grow (send other-fish 'get-size)))]))
+                   (grow (send other-fish get-size)))]))
   (define charlie (make-fish 10))
-  (send charlie 'get-size)
-  (send charlie 'grow 6)
-  (send charlie 'get-size)
+  (send charlie get-size)
+  (send charlie grow 6)
+  (send charlie get-size)
   (define (make-hungry-fish sz)
     (object-extend (make-fish sz)
                    #:inherit (eat)
                    [eat-more (λ (fish1 fish2)
                                (eat fish1)
                                (eat fish2))]))
-  (send (make-hungry-fish 32) 'get-size)
+  (send (make-hungry-fish 32) get-size)
   (define (make-picky-fish sz)
     (object-extend (make-fish sz)
                    #:super ([super-grow grow])
                    [grow (λ (amt)
                            (super-grow (* 3/4 amt)))]))
   (define daisy (make-picky-fish 20))
-  (send daisy 'eat charlie)
-  (send daisy 'get-size)
+  (send daisy eat charlie)
+  (send daisy get-size)
 ]
 
 
