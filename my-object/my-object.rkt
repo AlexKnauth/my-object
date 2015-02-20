@@ -7,13 +7,15 @@
          object-ref1   object-ref
          object-set-m1 object-set-m
          object-set1   object-set
-         send
+         send dynamic-send
+         send* send+
          this
          )
 
 (require racket/promise
          racket/match
          racket/local
+         racket/function
          keyword-lambda/keyword-case-lambda
          kw-utils/keyword-lambda
          syntax/parse/define
@@ -240,12 +242,24 @@
 (define (object-set obj #:-> v fld . flds)
   (apply object-set-m obj #:->m (λ (ths) v) fld flds))
 
-(define (send obj method . args)
+(define (dynamic-send obj method . args)
   (apply (object-ref1 obj method #:else (λ () (send-failure obj method))) args))
 
-(define-simple-macro (send* obj-expr:expr (method:id arg ...) ...+)
+(define-syntax send
+  (syntax-parser
+    [(send obj method:id . args)
+     #'(dynamic-send obj #'method . args)]
+    [(send obj ((~or (~literal quote) (~literal syntax)) method:id) . args)
+     #'(dynamic-send obj #'method . args)]
+    [(send obj ((~literal identity) method:expr) . args)
+     #'(dynamic-send obj method . args)]
+    [(send obj . field:id)
+     #'(object-ref obj #'field)]
+    [send:id #'dynamic-send]))
+
+(define-simple-macro (send* obj-expr:expr msg:expr ...+)
   (let ([obj obj-expr])
-    (send obj #'method arg ...)
+    (send obj . msg)
     ...))
 
 (define-simple-macro (send+ obj-expr:expr msg:expr ...)
@@ -334,6 +348,8 @@
     (check-equal? (obj 'c) 3)
     (define obj2 (obj 'a #:-> 5))
     (check-equal? (obj2 'a) 5)
+    (check-equal? (send obj2 . a) 5)
+    (check-equal? (send+ obj2 a) 5)
     )
   (test-case "object-ref* and object-set*"
     (define obj
@@ -349,6 +365,7 @@
     (check-equal? (obj2 'ball 'position 'y) 2)
     (check-equal? (obj2 'ball 'velocity 'x) 5)
     (check-equal? (obj2 'ball 'velocity 'y) 4)
+    (check-equal? (send+ obj2 ball velocity y) 4)
     )
   (test-case "methods, with immutable public fields and functional update"
     (define (make-fish sz)
@@ -357,13 +374,13 @@
               [grow (λ (amt)
                       (this 'size #:-> (+ amt size)))]
               [eat (λ (other-fish)
-                     (grow (send other-fish 'get-size)))]))
+                     (grow (send other-fish get-size)))]))
     (define charlie (make-fish 10))
     (check-equal? (charlie 'size) 10)
-    (define charlie2 (send charlie 'grow 6))
+    (define charlie2 (send charlie grow 6))
     (check-equal? (charlie2 'size) 16)
-    (check-equal? (send charlie2 'get-size) 16)
-    (check-equal? (send charlie 'get-size) 10)
+    (check-equal? (send charlie2 get-size) 16)
+    (check-equal? (send charlie get-size) 10)
     (define (make-hungry-fish sz)
       (object-extend (make-fish sz)
                      #:inherit (eat)
@@ -371,15 +388,15 @@
                                  (send+ this (eat fish1) (eat fish2)))]))
     (define hungry-fish (make-hungry-fish 32))
     (check-equal? (hungry-fish 'size) 32)
-    (check-equal? ((send hungry-fish 'eat-more charlie charlie2) 'size) 58)
+    (check-equal? ((send hungry-fish eat-more charlie charlie2) 'size) 58)
     (define (make-picky-fish sz)
       (object-extend (make-fish sz)
                      #:super ([super-grow grow])
                      [grow (λ (amt)
                              (super-grow (* 3/4 amt)))]))
     (define daisy (make-picky-fish 20))
-    (define daisy2 (send daisy 'eat charlie2))
-    (check-equal? (send daisy2 'get-size) 32)
+    (define daisy2 (send daisy eat charlie2))
+    (check-equal? (send daisy2 get-size) 32)
     )
   (test-case "methods, with mutable private fields"
     (define (make-fish sz)
@@ -388,26 +405,26 @@
               [grow (λ (amt)
                       (set! size (+ amt size)))]
               [eat (λ (other-fish)
-                     (grow (send other-fish 'get-size)))]))
+                     (grow (send other-fish get-size)))]))
     (define charlie (make-fish 10))
-    (check-equal? (send charlie 'get-size) 10)
-    (send charlie 'grow 6)
-    (check-equal? (send charlie 'get-size) 16)
+    (check-equal? (send charlie get-size) 10)
+    (send charlie grow 6)
+    (check-equal? (send charlie get-size) 16)
     (define (make-hungry-fish sz)
       (object-extend (make-fish sz)
                      #:inherit (eat)
                      [eat-more (λ (fish1 fish2)
                                  (eat fish1)
                                  (eat fish2))]))
-    (check-equal? (send (make-hungry-fish 32) 'get-size) 32)
+    (check-equal? (send (make-hungry-fish 32) get-size) 32)
     (define (make-picky-fish sz)
       (object-extend (make-fish sz)
                      #:super ([super-grow grow])
                      [grow (λ (amt)
                              (super-grow (* 3/4 amt)))]))
     (define daisy (make-picky-fish 20))
-    (send daisy 'eat charlie)
-    (check-equal? (send daisy 'get-size) 32)
+    (send daisy eat charlie)
+    (check-equal? (send daisy get-size) 32)
     )
   (test-case "test super corner-case"
     (define sup
@@ -419,7 +436,7 @@
                      [m1 (λ (x) (add1 x))]
                      [m2 (λ (y) (error 'nevergetshere))]
                      [m3 (λ (y) (super-m2 y))]))
-    (check-equal? (send sub 'm3 1) 2))
+    (check-equal? (send sub m3 1) 2))
   (test-case "final"
     (define sup
       (object [m1 (λ (x) x) #:final] [m2 (λ (x) x)]))
@@ -437,16 +454,16 @@
                     (if (integer? r) r (error 'm1 "needs to return an integer, given ~v" r)))
                   #:augmentable #:with inner]))
     (check-exn #rx"m1: needs to return an integer, given 'not-a-real-number"
-               (λ () (send (object-extend sup [m1 (λ (x) 'not-a-real-number)]) 'm1 0)))
+               (λ () (send (object-extend sup [m1 (λ (x) 'not-a-real-number)]) m1 0)))
     (check-exn #rx"m1: needs to return an integer, given 1.5"
-               (λ () (send (object-extend sup [m1 (λ (x) 1.5)]) 'm1 0)))
+               (λ () (send (object-extend sup [m1 (λ (x) 1.5)]) m1 0)))
     (define sub2
       (object-extend sup [m1 (λ (x) 5)]))
-    (check-equal? (send sub2 'm1 0) 5)
+    (check-equal? (send sub2 m1 0) 5)
     (define sub3
       (object-extend sub2 [m1 (λ (x) "also not a real number")]))
     (check-exn #rx"m1: needs to return an integer, given \"also not a real number\""
-               (λ () (send sub3 'm1 0)))
+               (λ () (send sub3 m1 0)))
     (define sub4
       (object #:extends sup
               [m1 (λ (x) (define r (inner x))
@@ -456,11 +473,11 @@
                   #:augmentable #:with inner]))
     (define sub5
       (object-extend sub4 [m1 (λ (x) x)]))
-    (check-equal? (send sub5 'm1 3) 3)
+    (check-equal? (send sub5 m1 3) 3)
     (check-exn #rx"m1: needs to return a positive number, given -1"
-               (λ () (send sub5 'm1 -1)))
+               (λ () (send sub5 m1 -1)))
     (check-exn #rx"m1: needs to return an integer, given 1.5"
-               (λ () (send sub5 'm1 1.5)))
+               (λ () (send sub5 m1 1.5)))
     )
   (test-case "inner with fields"
     (define sup
