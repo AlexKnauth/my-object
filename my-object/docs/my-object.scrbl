@@ -100,7 +100,7 @@ This is based on the examples from
   (define p (object [x 1] [y 2]))
   p
   (object? p)
-  (p 'x) (code:comment "by the way, you can use #'x here instead of 'x")
+  (code:line (p 'x) (code:comment "by the way, you can use #'x here instead of 'x"))
   (p 'y)
   (define p2 (p 'x #:-> 3))
   p2
@@ -129,7 +129,7 @@ This is based on the examples from @secref["classes" #:doc '(lib "scribblings/gu
 @examples[
   (require my-object)
   (define (make-fish sz)
-    (define size sz) (code:comment "private mutable field")
+    (code:line (define size sz) (code:comment "private mutable field"))
     (object [get-size (λ () size)]
             [grow (λ (amt)
                     (set! size (+ amt size)))]
