@@ -14,6 +14,7 @@
 
 (require racket/promise
          racket/match
+         racket/list
          racket/local
          racket/function
          racket/sequence
@@ -22,6 +23,7 @@
          kw-utils/keyword-lambda
          syntax/parse/define
          syntax/stx
+         unstable/sequence
          unstable/hash
          racket/stxparam
          racket/dict
@@ -61,32 +63,30 @@
        (object-set1 obj k v))
      (define (dict-has-key? obj key)
        (object-has-field? obj key))
-     (define (dict-iterate-first obj)     (hash-iterate-first (object-field-promises obj)))
-     (define (dict-iterate-next obj pos)  (hash-iterate-next (object-field-promises obj) pos))
-     (define (dict-iterate-key obj pos)   (hash-iterate-key (object-field-promises obj) pos))
-     (define (dict-iterate-value obj pos) (force (hash-iterate-value (object-field-promises obj)pos)))
-     (define (dict-map obj proc)          (hash-map (object-field-promises obj)
-                                                    #λ(proc %1 (force %2))))
-     (define (dict-for-each obj proc)     (hash-for-each (object-field-promises obj)
-                                                         #λ(proc %1 (force %2))))
-     (define (dict-empty? obj)            (hash-empty? (object-field-promises obj)))
-     (define (dict-count obj)             (hash-count (object-field-promises obj)))
-     (define (dict-keys obj)              (hash-keys (object-field-promises obj)))
-     (define (dict-values obj)            (hash-values (object-fields obj)))
-     (define (dict->list obj)             (hash->list (object-fields obj)))
-     (define (in-dict obj)                (in-hash (object-fields obj)))
-     (define (in-dict-keys obj)           (in-hash-keys (object-field-promises obj)))
-     (define (in-dict-values obj)         (in-hash-values (object-fields obj)))
-     (define (in-dict-pairs obj)          (in-hash-pairs (object-fields obj)))]
+     (define (dict-iterate-first obj)     (object-iterate-first obj))
+     (define (dict-iterate-next obj pos)  (object-iterate-next obj))
+     (define (dict-iterate-key obj pos)   (object-iterate-key obj))
+     (define (dict-iterate-value obj pos) (object-iterate-value obj))
+     (define (dict-map obj proc)          (object-dict-map obj))
+     (define (dict-for-each obj proc)     (object-for-each obj))
+     (define (dict-empty? obj)            (empty? (object-field-promises obj)))
+     (define (dict-count obj)             (length (object-field-promises obj)))
+     (define (dict-keys obj)              (map car (object-field-promises obj)))
+     (define (dict-values obj)            (map cdr (object-fields obj)))
+     (define (dict->list obj)             (object-fields obj))
+     (define (in-dict obj)                (in-pairs (object-fields obj)))
+     (define (in-dict-keys obj)           (in-list (map car (object-field-promises obj))))
+     (define (in-dict-values obj)         (in-list (map cdr (object-field-promises obj))))
+     (define (in-dict-pairs obj)          (in-list (object-fields obj)))]
     )
   (struct λfield (stx λaugmentable λoverrideable) #:transparent
     #:property prop:procedure λfld)
   )
 
-(define empty-fields-promise (delay #hasheq()))
+(define empty-fields-promise (delay '()))
 (void (force empty-fields-promise))
 
-(define empty-object (-object 'empty-object #hasheq() #hasheq() empty-fields-promise '()))
+(define empty-object (-object 'empty-object '() '() empty-fields-promise '()))
 
 (define (default-λaugmentable ths #:augment-with inner)
   inner)
@@ -146,14 +146,14 @@
             (syntax-parameterize ([this (make-rename-transformer #'ths)])
               (deffld inherit-id ths) ...
               (define super-id1
-                ((hash-ref super.λfields 'super-id2) ths))
+                ((dict-ref super.λfields 'super-id2) ths))
               ...
               (deffld field ths) ...
               field-expr))
           ...]
     (extend-object
      super
-     (make-immutable-hasheq (list (cons #'field field) ...))
+     (list (cons #'field field) ...)
      #:final '(final-field ...))))
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
@@ -163,7 +163,8 @@
   (match-define
     (-object _ super.λfields _ _ super.final-fields)
     super)
-  (for ([(k v) (in-hash new-procs)])
+  (for ([p (in-list new-procs)])
+    (match-define (cons k v) p)
     (when (member (stx-e k) super.final-fields)
       (raise-final-field-error k super)))
   (λfields->object
@@ -172,11 +173,13 @@
 
 (define (λfields->object λfields #:final [final-fields '()])
   (define fld-promises
-    (for/hasheq ([(k v) (in-hash λfields)])
-      (values k (delay (v ths)))))
+    (for/list ([p (in-list λfields)])
+      (match-define (cons k v) p)
+      (cons k (delay (v ths)))))
   (define flds-promise
-    (delay (for/hasheq ([(k v) (in-hash fld-promises)])
-             (values k (force v)))))
+    (delay (for/list ([p (in-list fld-promises)])
+             (match-define (cons k v) p)
+             (cons k (force v)))))
   (define ths
     (-object #f λfields fld-promises flds-promise final-fields))
   (force flds-promise)
@@ -218,10 +221,10 @@
   (force (object-fields-promise obj)))
 
 (define (object-has-field? obj fld)
-  (hash-has-key? (object-field-promises obj) (stx-e fld)))
+  (dict-has-key? (object-field-promises obj) (stx-e fld)))
 
 (define (object-ref1 obj fld #:else [failure (λ () (object-ref-failure obj fld))])
-  (force (hash-ref (object-field-promises obj) (stx-e fld) failure)))
+  (force (dict-ref (object-field-promises obj) (stx-e fld) failure)))
 
 (define fail-sym (gensym 'failure))
 (define (object-ref obj #:else [failure fail-sym] . flds)
@@ -236,7 +239,7 @@
          (object-ref1 obj fld #:else fail))]))
 
 (define (object-set-m1 obj fld #:->m m)
-  (extend-object obj (hasheq fld m) #:final '()))
+  (extend-object obj (list (cons fld m)) #:final '()))
 
 (define (object-set1 obj fld #:-> v)
   (object-set-m1 obj fld #:->m (λ (ths) v)))
@@ -278,20 +281,60 @@
     obj))
 
 
-(define (extend-λfields λfields hsh)
-  (for/fold ([λfields λfields])
-            ([(k v) (in-hash hsh)])
-    (hash-update λfields (stx-e k)
-      (lambda (old-v)
-        (augment/override-λfield
-         old-v v #:stx (if (syntax? k) k #f)))
-      (lambda () default-λfield))))
+(define (extend-λfields λfields alst)
+  (define-values (i->p len)
+    (for/fold ([i->p '()] [len (length λfields)])
+              ([p (in-list alst)])
+      (define k (stx-e (car p)))
+      (define i
+        (for/or ([λfld-p (in-list λfields)] [i (in-naturals)])
+          (and (equal? (car λfld-p) k) i)))
+      (cond [i    (values (cons (cons i p) i->p) len)]
+            [else (values (cons (cons len p) i->p) (add1 len))])))
+  (for/list ([i (in-range len)]
+             [p (in-sequence-forever λfields (cons #f default-λfield))])
+    (match (dict-ref i->p i #f)
+      [#f p]
+      [(cons k-stx new-v)
+       (match-define (cons _ old-v) p)
+       (cons (stx-e k-stx)
+             (augment/override-λfield
+              old-v new-v #:stx (if (syntax? k-stx) k-stx #f)))])))
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+
+(define (object-iterate-first obj)
+  (if (empty? (object-field-promises))
+      #f
+      0))
+
+(define (object-iterate-next obj i)
+  (if (< (add1 i) (length (object-field-promises obj)))
+      (add1 i)
+      #f))
+
+(define (object-iterate-key obj i)
+  (car (list-ref (object-field-promises obj) i)))
+
+(define (object-iterate-value obj i)
+  (force (cdr (list-ref (object-field-promises obj) i))))
+
+(define (object-dict-map obj proc)
+  (for/list ([p (in-list (object-field-promises obj))])
+    (proc (car p) (cdr p))))
+
+(define (object-for-each obj proc)
+  (for ([p (in-list (object-field-promises obj))])
+    (proc (car p) (cdr p))))
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 
 (define (obj-write-proc obj out mode)
   (match-define (-object name λfields field-promises fields-promise final-fields) obj)
   (match mode
     [0  (write-string "(object" out)
-        (for ([(k v) (in-hash (force fields-promise))])
+        (for ([p (in-list (force fields-promise))])
+          (match-define (cons k v) p)
           (cond [(member k final-fields)
                  (fprintf out " [~a ~v #:final]" k v)]
                 [else
@@ -300,7 +343,8 @@
         (void)]
     [_ #:when (symbol? name) (fprintf out "#<object:~a>" name)]
     [_ (write-string "#<object" out)
-       (for ([(k v) (in-hash (force fields-promise))])
+       (for ([p (in-list (force fields-promise))])
+         (match-define (cons k v) p)
          (fprintf out " [~a ~v]" k v))
        (write-string ">" out)
        (void)]))
@@ -522,5 +566,40 @@
     (check-equal? (obj 'x) 1)
     (check-equal? (obj 'y) 2)
     (check-equal? (obj 'ths) obj)
+    )
+  (test-case "order of fields"
+    (define obj
+      (object [first 1]
+              [second 2]
+              [third 3]
+              [fourth 4]))
+    (check-equal? (object-fields obj)
+                  '([first . 1] [second . 2] [third . 3] [fourth . 4]))
+    (define obj2
+      (object-extend obj [third "3"] [fifth 5] [second "2"]))
+    (check-equal? (object-fields obj2)
+                  '([first . 1] [second . "2"] [third . "3"] [fourth . 4] [fifth . 5]))
+    (check-equal? (format "~v" obj2)
+                  "(object [first 1] [second \"2\"] [third \"3\"] [fourth 4] [fifth 5])")
+    (define out3 (open-output-string))
+    (define obj3
+      (parameterize ([current-output-port out3])
+        (object [first (displayln "first")]
+                [second (begin (displayln "second")
+                               third
+                               (displayln "fourth"))]
+                [fifth (displayln "fifth")]
+                [third (displayln "third")] ; because it is referenced by second
+                [sixth (displayln "sixth")])))
+    (check-equal? (get-output-string out3)
+                  "first\nsecond\nthird\nfourth\nfifth\nsixth\n")
+    (define out4 (open-output-string))
+    (define obj4
+      (parameterize ([current-output-port out4])
+        (object #:extends obj3
+                [third (displayln "3rd")]
+                [seventh (displayln "7th")])))
+    (check-equal? (get-output-string out4)
+                  "first\nsecond\n3rd\nfourth\nfifth\nsixth\n7th\n")
     )
   )
