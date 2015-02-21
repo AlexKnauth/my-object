@@ -1,4 +1,4 @@
-#lang racket/base
+#lang afl racket/base
 
 (provide object
          object?
@@ -16,6 +16,8 @@
          racket/match
          racket/local
          racket/function
+         racket/sequence
+         generic-bind
          keyword-lambda/keyword-case-lambda
          kw-utils/keyword-lambda
          syntax/parse/define
@@ -37,6 +39,7 @@
 (defs-renamed ([-object object]
                object?
                object-λfields
+               object-field-promises
                object-fields-promise
                object-final-fields
                λfield)
@@ -46,7 +49,7 @@
         (keyword-apply object-proc kws kw-args ths rst)))
     (define (λfield λfld ths)
       (λfield-proc λfld ths)))
-  (struct object (name λfields fields-promise final-fields)
+  (struct object (name λfields field-promises fields-promise final-fields)
     #:property prop:procedure obj
     #:methods gen:custom-write
     [(define (write-proc obj out mode)
@@ -58,19 +61,21 @@
        (object-set1 obj k v))
      (define (dict-has-key? obj key)
        (object-has-field? obj key))
-     (define (dict-iterate-first obj)     (hash-iterate-first (object-fields obj)))
-     (define (dict-iterate-next obj pos)  (hash-iterate-next (object-fields obj) pos))
-     (define (dict-iterate-key obj pos)   (hash-iterate-key (object-fields obj) pos))
-     (define (dict-iterate-value obj pos) (hash-iterate-value (object-fields obj) pos))
-     (define (dict-map obj proc)          (hash-map (object-fields obj) proc))
-     (define (dict-for-each obj proc)     (hash-for-each (object-fields obj) proc))
-     (define (dict-empty? obj)            (hash-empty? (object-fields obj)))
-     (define (dict-count obj)             (hash-count (object-fields obj)))
-     (define (dict-keys obj)              (hash-keys (object-fields obj)))
+     (define (dict-iterate-first obj)     (hash-iterate-first (object-field-promises obj)))
+     (define (dict-iterate-next obj pos)  (hash-iterate-next (object-field-promises obj) pos))
+     (define (dict-iterate-key obj pos)   (hash-iterate-key (object-field-promises obj) pos))
+     (define (dict-iterate-value obj pos) (force (hash-iterate-value (object-field-promises obj)pos)))
+     (define (dict-map obj proc)          (hash-map (object-field-promises obj)
+                                                    #λ(proc %1 (force %2))))
+     (define (dict-for-each obj proc)     (hash-for-each (object-field-promises obj)
+                                                         #λ(proc %1 (force %2))))
+     (define (dict-empty? obj)            (hash-empty? (object-field-promises obj)))
+     (define (dict-count obj)             (hash-count (object-field-promises obj)))
+     (define (dict-keys obj)              (hash-keys (object-field-promises obj)))
      (define (dict-values obj)            (hash-values (object-fields obj)))
      (define (dict->list obj)             (hash->list (object-fields obj)))
      (define (in-dict obj)                (in-hash (object-fields obj)))
-     (define (in-dict-keys obj)           (in-hash-keys (object-fields obj)))
+     (define (in-dict-keys obj)           (in-hash-keys (object-field-promises obj)))
      (define (in-dict-values obj)         (in-hash-values (object-fields obj)))
      (define (in-dict-pairs obj)          (in-hash-pairs (object-fields obj)))]
     )
@@ -81,7 +86,7 @@
 (define empty-fields-promise (delay #hasheq()))
 (void (force empty-fields-promise))
 
-(define empty-object (-object 'empty-object #hasheq() empty-fields-promise '()))
+(define empty-object (-object 'empty-object #hasheq() #hasheq() empty-fields-promise '()))
 
 (define (default-λaugmentable ths #:augment-with inner)
   inner)
@@ -135,7 +140,7 @@
   (object-extend super-obj-expr:expr :maybe-inherit/super :field-decls)
   (local [(define super super-obj-expr)
           (match-define
-            (-object _ super.λfields _ super.final-fields)
+            (-object _ super.λfields _ _ super.final-fields)
             super)
           (define (field . field-args)
             (syntax-parameterize ([this (make-rename-transformer #'ths)])
@@ -156,7 +161,7 @@
 
 (define (extend-object super new-procs #:final new-final-fields)
   (match-define
-    (-object _ super.λfields _ super.final-fields)
+    (-object _ super.λfields _ _ super.final-fields)
     super)
   (for ([(k v) (in-hash new-procs)])
     (when (member (stx-e k) super.final-fields)
@@ -166,11 +171,14 @@
    #:final (append super.final-fields new-final-fields)))
 
 (define (λfields->object λfields #:final [final-fields '()])
+  (define fld-promises
+    (for/hasheq ([(k v) (in-hash λfields)])
+      (values k (delay (v ths)))))
   (define flds-promise
-    (delay (for/hash ([(k v) (in-hash λfields)])
-             (values k (v ths)))))
+    (delay (for/hasheq ([(k v) (in-hash fld-promises)])
+             (values k (force v)))))
   (define ths
-    (-object #f λfields flds-promise final-fields))
+    (-object #f λfields fld-promises flds-promise final-fields))
   (force flds-promise)
   ths)
 
@@ -210,10 +218,10 @@
   (force (object-fields-promise obj)))
 
 (define (object-has-field? obj fld)
-  (hash-has-key? (object-fields obj) (stx-e fld)))
+  (hash-has-key? (object-field-promises obj) (stx-e fld)))
 
 (define (object-ref1 obj fld #:else [failure (λ () (object-ref-failure obj fld))])
-  (hash-ref (object-fields obj) (stx-e fld) failure))
+  (force (hash-ref (object-field-promises obj) (stx-e fld) failure)))
 
 (define fail-sym (gensym 'failure))
 (define (object-ref obj #:else [failure fail-sym] . flds)
@@ -280,7 +288,7 @@
       (lambda () default-λfield))))
 
 (define (obj-write-proc obj out mode)
-  (match-define (-object name λfields fields-promise final-fields) obj)
+  (match-define (-object name λfields field-promises fields-promise final-fields) obj)
   (match mode
     [0  (write-string "(object" out)
         (for ([(k v) (in-hash (force fields-promise))])
@@ -505,5 +513,14 @@
                (λ () (object-extend sub4 [a -1])))
     (check-exn #rx"a: expected an integer, given 1.5"
                (λ () (object-extend sub4 [a 1.5])))
+    )
+  (test-case "referring to other fields within field expressions"
+    (define obj
+      (object [x 1]
+              [y (add1 x)]
+              [ths this]))
+    (check-equal? (obj 'x) 1)
+    (check-equal? (obj 'y) 2)
+    (check-equal? (obj 'ths) obj)
     )
   )
