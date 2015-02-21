@@ -214,12 +214,15 @@
 (define object-proc
   (keyword-case-lambda
    [(obj #:fields _) (object-fields obj)]
-   [(obj fld #:else [failure (λ()(object-ref-failure obj fld))]) (object-ref1 obj fld #:else failure)]
-   [(obj fld #:-> v) (object-set1 obj fld #:-> v)]
-   [(obj fld #:->m m) (object-set-m1 obj fld #:->m m)]
+   [(obj fld #:else [failure (λ() (object-ref-failure obj fld))])
+    (object-ref1 obj fld #:else failure)]
+   [(obj fld #:-> v #:final? [final? #f]) (object-set1 obj fld #:-> v #:final? final?)]
+   [(obj fld #:->m m #:final? [final? #f]) (object-set-m1 obj fld #:->m m #:final? final?)]
    [(obj #:else [failure fail-sym] . flds) (apply object-ref obj flds #:else failure)]
-   [(obj #:-> v fld . flds) (apply object-set obj #:-> v fld flds)]
-   [(obj #:->m m fld . flds) (apply object-set-m obj #:->m m fld flds)]
+   [(obj #:-> v #:final? [final? #f] fld . flds)
+    (apply object-set obj #:-> v #:final? final? fld flds)]
+   [(obj #:->m m #:final? [final? #f] fld . flds)
+    (apply object-set-m obj #:->m m #:final? final? fld flds)]
    ))
 
 (define (object-fields obj)
@@ -248,22 +251,24 @@
          (apply object-ref (object-ref1 obj fld) flds #:else fail)
          (object-ref1 obj fld #:else fail))]))
 
-(define (object-set-m1 obj fld #:->m m)
-  (extend-object obj (list (cons fld m)) #:final '()))
+(define (object-set-m1 obj fld #:->m m #:final? [final? #f])
+  (extend-object obj (list (cons fld m))
+                 #:final (if final? (list fld) '())))
 
-(define (object-set1 obj fld #:-> v)
-  (object-set-m1 obj fld #:->m (procedure-rename (λ (ths) v) (stx-e fld))))
+(define (object-set1 obj fld #:-> v #:final? [final? #f])
+  (object-set-m1 obj fld #:->m (procedure-rename (λ (ths) v) (stx-e fld)) #:final? final?))
 
-(define (object-set-m obj #:->m m fld . flds)
+(define (object-set-m obj #:->m m #:final? [final? #f] fld . flds)
   (match (cons fld flds)
-    [(list fld) (object-set-m1 obj fld #:->m m)]
+    [(list fld) (object-set-m1 obj fld #:->m m #:final? final?)]
     [(cons fld rst)
      (define obj.fld (object-ref1 obj fld))
-     (define new-obj.fld (apply object-set-m obj.fld #:->m m rst))
+     (define new-obj.fld (apply object-set-m obj.fld #:->m m rst #:final? final?))
      (object-set1 obj fld #:-> new-obj.fld)]))
 
-(define (object-set obj #:-> v fld . flds)
+(define (object-set obj #:-> v #:final? [final? #f] fld . flds)
   (apply object-set-m obj #:->m (procedure-rename (λ (ths) v) (stx-e (last (cons fld flds))))
+         #:final? final?
          fld flds))
 
 (define (dynamic-send obj method . args)
@@ -293,6 +298,7 @@
 
 
 (define (extend-λfields λfields alst #:final final-fields)
+  (define final-field-syms (map stx-e final-fields))
   (define-values (i->p len)
     (for/fold ([i->p '()] [len (length λfields)])
               ([p (in-list alst)])
@@ -312,7 +318,7 @@
        (cons k
              (augment/override-λfield
               old-v new-v #:stx (if (syntax? k-stx) k-stx #f)
-              #:final? (member k final-fields)))])))
+              #:final? (member k final-field-syms)))])))
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 
@@ -434,6 +440,10 @@
     (check-equal? (obj2 'ball 'velocity 'x) 5)
     (check-equal? (obj2 'ball 'velocity 'y) 4)
     (check-equal? (send+ obj2 ball velocity y) 4)
+    (define obj3 (obj2 'ball 'velocity #'x #:-> 6 #:final? #t))
+    (check-equal? (obj3 'ball 'velocity 'x) 6)
+    (check-exn (regexp (regexp-quote "cannot override the field x of (object [x 6 #:final] [y 4])"))
+               (λ () (obj3 'ball 'velocity #'x #:-> 7)))
     )
   (test-case "methods, with immutable public fields and functional update"
     (define (make-fish sz)
