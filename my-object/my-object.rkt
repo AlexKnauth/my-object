@@ -252,7 +252,7 @@
   (extend-object obj (list (cons fld m)) #:final '()))
 
 (define (object-set1 obj fld #:-> v)
-  (object-set-m1 obj fld #:->m (λ (ths) v)))
+  (object-set-m1 obj fld #:->m (procedure-rename (λ (ths) v) (stx-e fld))))
 
 (define (object-set-m obj #:->m m fld . flds)
   (match (cons fld flds)
@@ -263,7 +263,8 @@
      (object-set1 obj fld #:-> new-obj.fld)]))
 
 (define (object-set obj #:-> v fld . flds)
-  (apply object-set-m obj #:->m (λ (ths) v) fld flds))
+  (apply object-set-m obj #:->m (procedure-rename (λ (ths) v) (stx-e (last (cons fld flds))))
+         fld flds))
 
 (define (dynamic-send obj method . args)
   (apply (object-ref1 obj method #:else (λ () (send-failure obj method))) args))
