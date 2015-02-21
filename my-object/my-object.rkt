@@ -76,7 +76,7 @@
      (define (dict->list obj)             (object-fields obj))
      (define (in-dict obj)                (in-pairs (object-fields obj)))
      (define (in-dict-keys obj)           (in-list (map car (object-field-promises obj))))
-     (define (in-dict-values obj)         (in-list (map cdr (object-field-promises obj))))
+     (define (in-dict-values obj)         (in-list (map cdr (object-fields obj))))
      (define (in-dict-pairs obj)          (in-list (object-fields obj)))]
     )
   (struct λfield (stx λaugmentable λoverrideable final?) #:transparent
