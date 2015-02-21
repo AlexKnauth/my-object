@@ -43,15 +43,15 @@
                object-λfields
                object-field-promises
                object-fields-promise
-               object-final-fields
-               λfield)
+               λfield
+               λfield-final?)
   (defs-renamed ([obj object] [λfld λfield])
     (define object
       (keyword-lambda (kws kw-args ths . rst)
         (keyword-apply object-proc kws kw-args ths rst)))
     (define (λfield λfld ths)
       (λfield-proc λfld ths)))
-  (struct object (name λfields field-promises fields-promise final-fields)
+  (struct object (name λfields field-promises fields-promise)
     #:property prop:procedure obj
     #:methods gen:custom-write
     [(define (write-proc obj out mode)
@@ -79,14 +79,14 @@
      (define (in-dict-values obj)         (in-list (map cdr (object-field-promises obj))))
      (define (in-dict-pairs obj)          (in-list (object-fields obj)))]
     )
-  (struct λfield (stx λaugmentable λoverrideable) #:transparent
+  (struct λfield (stx λaugmentable λoverrideable final?) #:transparent
     #:property prop:procedure λfld)
   )
 
 (define empty-fields-promise (delay '()))
 (void (force empty-fields-promise))
 
-(define empty-object (-object 'empty-object '() '() empty-fields-promise '()))
+(define empty-object (-object 'empty-object '() '() empty-fields-promise))
 
 (define (default-λaugmentable ths #:augment-with inner)
   inner)
@@ -95,7 +95,7 @@
   void)
 
 (define default-λfield
-  (λfield #f default-λaugmentable default-λoverrideable))
+  (λfield #f default-λaugmentable default-λoverrideable #f))
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;; macros
@@ -140,7 +140,7 @@
   (object-extend super-obj-expr:expr :maybe-inherit/super :field-decls)
   (local [(define super super-obj-expr)
           (match-define
-            (-object _ super.λfields _ _ super.final-fields)
+            (-object _ super.λfields _ _)
             super)
           (define (field . field-args)
             (syntax-parameterize ([this (make-rename-transformer #'ths)])
@@ -161,17 +161,18 @@
 
 (define (extend-object super new-procs #:final new-final-fields)
   (match-define
-    (-object _ super.λfields _ _ super.final-fields)
+    (-object _ super.λfields _ _)
     super)
+  (define super.final-fields (object-final-fields super))
   (for ([p (in-list new-procs)])
     (match-define (cons k v) p)
     (when (member (stx-e k) super.final-fields)
       (raise-final-field-error k super)))
   (λfields->object
-   (extend-λfields super.λfields new-procs)
-   #:final (append super.final-fields new-final-fields)))
+   (extend-λfields super.λfields new-procs
+                   #:final new-final-fields)))
 
-(define (λfields->object λfields #:final [final-fields '()])
+(define (λfields->object λfields)
   (define fld-promises
     (for/list ([p (in-list λfields)])
       (match-define (cons k v) p)
@@ -181,27 +182,31 @@
              (match-define (cons k v) p)
              (cons k (force v)))))
   (define ths
-    (-object #f λfields fld-promises flds-promise final-fields))
+    (-object #f λfields fld-promises flds-promise))
   (force flds-promise)
   ths)
 
-(define (augment/override-λfield λfld proc #:stx [stx #f])
+(define (augment/override-λfield λfld proc #:stx [stx #f] #:final? final?)
   (define-values (req-kws all-kws) (procedure-keywords proc))
-  (match-define (λfield old-stx λaugmentable λoverrideable) λfld)
+  (match-define (λfield old-stx λaugmentable λoverrideable super-final?) λfld)
+  (when super-final?
+    (raise-final-field-error (cond [(syntax? stx) stx] [(syntax? old-stx) old-stx]
+                                   [stx stx] [old-stx old-stx] [else (object-name proc)])
+                             #f))
   (match* (req-kws all-kws)
     [('() '())
      (λfield (if (syntax? stx) stx old-stx)
-             λaugmentable proc)]
+             λaugmentable proc final?)]
     [('(#:augment-with) '(#:augment-with))
      (λfield (if (syntax? stx) stx old-stx)
              (λ (ths #:augment-with inner-inner)
                (define inner (proc ths #:augment-with inner-inner))
                (λaugmentable ths #:augment-with inner))
-             default-λoverrideable)]
+             default-λoverrideable final?)]
     ))
   
 (define (λfield-proc λfld ths)
-  (match-define (λfield stx λaugmentable λoverrideable) λfld)
+  (match-define (λfield stx λaugmentable λoverrideable final?) λfld)
   (λaugmentable ths #:augment-with (λoverrideable ths)))
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
@@ -219,6 +224,11 @@
 
 (define (object-fields obj)
   (force (object-fields-promise obj)))
+
+(define (object-final-fields obj)
+  (for/list ([(k v) (in-pairs (object-λfields obj))]
+             #:when (λfield-final? v))
+    k))
 
 (define (object-has-field? obj fld)
   (dict-has-key? (object-field-promises obj) (stx-e fld)))
@@ -281,7 +291,7 @@
     obj))
 
 
-(define (extend-λfields λfields alst)
+(define (extend-λfields λfields alst #:final final-fields)
   (define-values (i->p len)
     (for/fold ([i->p '()] [len (length λfields)])
               ([p (in-list alst)])
@@ -297,9 +307,11 @@
       [#f p]
       [(cons k-stx new-v)
        (match-define (cons _ old-v) p)
-       (cons (stx-e k-stx)
+       (define k (stx-e k-stx))
+       (cons k
              (augment/override-λfield
-              old-v new-v #:stx (if (syntax? k-stx) k-stx #f)))])))
+              old-v new-v #:stx (if (syntax? k-stx) k-stx #f)
+              #:final? (member k final-fields)))])))
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 
@@ -330,12 +342,13 @@
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 
 (define (obj-write-proc obj out mode)
-  (match-define (-object name λfields field-promises fields-promise final-fields) obj)
+  (match-define (-object name λfields field-promises fields-promise) obj)
   (match mode
     [0  (write-string "(object" out)
-        (for ([p (in-list (force fields-promise))])
-          (match-define (cons k v) p)
-          (cond [(member k final-fields)
+        (for ([(k λv) (in-pairs λfields)]
+              [(k2 v) (in-pairs (force fields-promise))])
+          (unless (eq? k k2) (error 'obj "this should never happen\n  k: ~v\n  k2: ~v\n" k k2))
+          (cond [(λfield-final? λv)
                  (fprintf out " [~a ~v #:final]" k v)]
                 [else
                  (fprintf out " [~a ~v]" k v)]))
@@ -385,7 +398,9 @@
 (define (raise-final-field-error field super)
   (define field-stx (stx field))
   (raise-syntax-error 'object-extend
-                      (format "cannot override the field ~a of ~v" (syntax-e field-stx) super)
+                      (if super
+                          (format "cannot override the field ~a of ~v" (syntax-e field-stx) super)
+                          (format "cannot override the field ~a" (syntax-e field-stx)))
                       field-stx))
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
