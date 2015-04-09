@@ -27,7 +27,7 @@
          unstable/hash
          racket/stxparam
          racket/dict
-         my-format
+         unstable/error
          "stuff.rkt"
          (for-syntax racket/base
                      syntax/parse
@@ -371,11 +371,10 @@
 
 (define (object-ref-failure obj fld)
   (define fld-stx (stx fld))
-  (raise-syntax-error 'object-ref
-                      (-format "object does not have field" "\n"
-                               "  field: ~a" (syntax-e fld-stx) "\n"
-                               "  object: ~v" obj)
-                      fld-stx))
+  (raise-syntax-error* "object-ref: object does not have field"
+                       fld-stx fld-stx
+                       "field" (syntax-e fld-stx)
+                       '("object" value) obj))
 
 (define (object-ref*-failure obj flds)
   (define fld-stxs (stx-map stx flds))
@@ -386,21 +385,17 @@
         [(list-rest fst rst)
          (cond [(object-has-field? obj fst) (loop (object-ref obj fst) rst)]
                [else fst])])))
-  (raise-syntax-error 'object-ref*
-                      (-format
-                       "object does not have nested field chain" "\n"
-                       "  field chain: ~a" (map syntax-e fld-stxs) "\n"
-                       "  object: ~v" obj)
-                      fld-stx))
+  (raise-syntax-error* "object-ref*: object does not have nested field chain"
+                       fld-stx fld-stx
+                       "field chain" (map syntax-e fld-stxs)
+                       '("object" value) obj))
 
 (define (send-failure obj method)
   (define method-stx (stx method))
-  (raise-syntax-error 'send
-                      (-format
-                       "object does not have method" "\n"
-                       "  method: ~a" (syntax-e method-stx) "\n"
-                       "  object: ~v" obj)
-                      method-stx))
+  (raise-syntax-error* "send: object does not have method"
+                       method-stx method-stx
+                       "method" (syntax-e method-stx)
+                       '("object" value) obj))
 
 (define (raise-final-field-error field super)
   (define field-stx (stx field))
