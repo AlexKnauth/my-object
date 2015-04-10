@@ -5,6 +5,8 @@
 
 @title{my-object}
 
+source code: @url["https://github.com/AlexKnauth/my-object"]
+
 @defmodule[my-object]{
 my version of objects, inspired by
 @secref["Things" #:doc '(lib "heresy/docs/heresy.scrbl")] from
