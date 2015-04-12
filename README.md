@@ -1,6 +1,8 @@
 my-object [![Build Status](https://travis-ci.org/AlexKnauth/my-object.png?branch=master)](https://travis-ci.org/AlexKnauth/my-object)
 ===
 
+documentation: http://pkg-build.racket-lang.org/doc/my-object/index.html
+
 my version of objects, inspired by "things" from https://github.com/jarcane/heresy
 
 This is based on the examples from http://docs.racket-lang.org/guide/define-struct.html
