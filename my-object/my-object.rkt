@@ -1,4 +1,4 @@
-#lang afl racket/base
+#lang racket/base
 
 (provide object
          object?
@@ -17,14 +17,11 @@
          racket/list
          racket/local
          racket/function
-         racket/sequence
-         generic-bind
          keyword-lambda/keyword-case-lambda
          kw-utils/keyword-lambda
          syntax/parse/define
          syntax/stx
          unstable/sequence
-         unstable/hash
          racket/stxparam
          racket/dict
          unstable/error

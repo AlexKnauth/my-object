@@ -2,8 +2,7 @@
 
 (define collection 'multi)
 
-(define deps '("base" "afl" "generic-bind" "hash-lambda" "kw-utils" "unstable-list-lib"
-                      ))
+(define deps '("base" "hash-lambda" "kw-utils"))
 
 (define build-deps '("rackunit-lib" "scribble-lib" "racket-doc" "heresy"))
 
