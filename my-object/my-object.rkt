@@ -19,7 +19,7 @@
          racket/function
          keyword-lambda/keyword-case-lambda
          kw-utils/keyword-lambda
-         syntax/parse/define
+         (only-in syntax/parse/define define-simple-macro)
          syntax/stx
          unstable/sequence
          racket/stxparam

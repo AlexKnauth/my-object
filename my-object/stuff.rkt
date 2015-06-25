@@ -2,7 +2,7 @@
 
 (provide (all-defined-out))
 
-(require syntax/parse/define
+(require (only-in syntax/parse/define define-simple-macro)
          racket/splicing
          (for-syntax racket/base
                      syntax/parse
