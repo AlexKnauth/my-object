@@ -21,18 +21,15 @@ env:
     # Supply more than one RACKET_VERSION (as in the example below) to
     # create a Travis-CI build matrix to test against multiple Racket
     # versions.
-    - RACKET_VERSION=6.0.1
-    - RACKET_VERSION=6.1
     - RACKET_VERSION=6.1.1
+    - RACKET_VERSION=6.2
     - RACKET_VERSION=HEAD
-    - RACKET_VERSION=SCOPE_SNAPSHOT
 
 # You may want to test against certain versions of Racket, without
 # having them count against the overall success/failure.
 matrix:
   allow_failures:
     - env: RACKET_VERSION=HEAD
-    - evv: RACKET_VERSION=SCOPE_SNAPSHOT
   fast_finish: true
 
 
