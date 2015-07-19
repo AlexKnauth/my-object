@@ -3,6 +3,7 @@
 (define collection 'multi)
 
 (define deps '("base"
+               "lens"
                "hash-lambda"
                "kw-utils"
                ))

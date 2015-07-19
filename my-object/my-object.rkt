@@ -7,6 +7,7 @@
          object-ref1   object-ref
          object-set-m1 object-set-m
          object-set1   object-set
+         object-ref1-lens object-ref-lens
          send dynamic-send
          send* send+
          this
@@ -25,6 +26,7 @@
          racket/stxparam
          racket/dict
          unstable/error
+         lens
          "stuff.rkt"
          (for-syntax racket/base
                      syntax/parse
@@ -267,6 +269,14 @@
   (apply object-set-m obj #:->m (procedure-rename (λ (ths) v) (stx-e (last (cons fld flds))))
          #:final? final?
          fld flds))
+
+(define (object-ref1-lens fld)
+  (make-lens
+   (λ (tgt) (object-ref1 tgt fld))
+   (λ (tgt v) (object-set1 tgt fld #:-> v))))
+
+(define (object-ref-lens . flds)
+  (apply lens-thrush (map object-ref1-lens flds)))
 
 (define (dynamic-send obj method . args)
   (apply (object-ref1 obj method #:else (λ () (send-failure obj method))) args))
