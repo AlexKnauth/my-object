@@ -630,4 +630,11 @@
     (check-equal? (get-output-string out4)
                   "first\nsecond\n3rd\nfourth\nfifth\nsixth\n7th\n")
     )
+  (test-case "lenses"
+    (define v (gensym))
+    (check-equal? (lens-view (object-ref-lens #'a) (object [a v]))
+                  v)
+    (check-equal? ((lens-set (object-ref-lens #'a) (object [a 1]) v) #'a)
+                  v)
+    )
   )
