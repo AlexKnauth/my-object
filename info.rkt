@@ -6,6 +6,7 @@
                "lens"
                "hash-lambda"
                "kw-utils"
+               "unstable-lib"
                ))
 
 (define build-deps '("rackunit-lib"
