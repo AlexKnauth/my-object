@@ -6,7 +6,7 @@
          racket/splicing
          (for-syntax racket/base
                      syntax/parse
-                     unstable/syntax
+                     syntax/transformer
                      ))
 
 (define-simple-macro (defrename [id1:id id2:id] ...)
